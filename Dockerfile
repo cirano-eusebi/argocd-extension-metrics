@@ -1,5 +1,5 @@
 # Start from golang base image
-FROM golang:alpine as builder
+FROM golang:alpine AS builder
 
 # Enable go modules
 ENV GO111MODULE=on
@@ -34,7 +34,6 @@ RUN CGO_ENABLED=0 go build -o ./bin/metrics-server ./cmd/main.go
 
 # Start a new stage from scratch
 FROM scratch
-
 COPY --from=builder /app/bin/metrics-server /
 
 ENTRYPOINT [ "/metrics-server" ]

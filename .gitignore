@@ -1,7 +1,11 @@
 .idea/
+.tool-versions
 vendor/
 dist/
 bin/
+test/
 extensions/resource-metrics/resource-metrics-extention/ui/dist
 extensions/resource-metrics/resource-metrics-extention/ui/package-lock.json
 extensions/resource-metrics/resource-metrics-extention/ui/extension.tar
+cmd/app/config.json
+cmd/__debug_bin*

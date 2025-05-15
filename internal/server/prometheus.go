@@ -2,9 +2,11 @@ package server
 
 import (
 	"bytes"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -34,9 +36,20 @@ type AggregatedResponse struct {
 }
 
 type PrometheusProvider struct {
-	logger   *zap.SugaredLogger
-	provider v1.API
-	config   *MetricsConfigProvider
+	logger            *zap.SugaredLogger
+	provider          v1.API
+	config            *MetricsConfigProvider
+	mimirRoundTripper *mimirRoundTripper
+}
+
+var insecureRoundTripper http.RoundTripper = &http.Transport{
+	Proxy: http.ProxyFromEnvironment,
+	DialContext: (&net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}).DialContext,
+	TLSHandshakeTimeout: 10 * time.Second,
+	TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
 }
 
 func (pp *PrometheusProvider) getType() string {
@@ -67,13 +80,43 @@ func NewPrometheusProvider(prometheusConfig *MetricsConfigProvider, logger *zap.
 }
 
 func (pp *PrometheusProvider) init() error {
-	client, err := api.NewClient(api.Config{
-		Address: pp.config.Provider.Address,
-	})
-	if err != nil {
-		pp.logger.Errorf("Error creating client: %v\n", err)
-		return err
+	var client api.Client
+	var roundTripper http.RoundTripper
+	var err error
+
+	if pp.config.Provider.Insecure {
+		pp.logger.Infof("Creating insecure prometheus client\n")
+		roundTripper = insecureRoundTripper
+	} else {
+		roundTripper = api.DefaultRoundTripper
 	}
+
+	if pp.config.Provider.Tenant == "" {
+		client, err = api.NewClient(api.Config{
+			Address:      pp.config.Provider.Address,
+			RoundTripper: roundTripper,
+		})
+		if err != nil {
+			pp.logger.Errorf("Error creating client: %v\n", err)
+			return err
+		}
+	} else {
+		pp.logger.Infof("Creating mimir client with tenant %s\n", pp.config.Provider.Tenant)
+		pp.mimirRoundTripper = &mimirRoundTripper{
+			logger:       pp.logger,
+			tenant:       pp.config.Provider.Tenant,
+			roundTripper: roundTripper,
+		}
+		client, err = api.NewClient(api.Config{
+			Address:      pp.config.Provider.Address,
+			RoundTripper: pp.mimirRoundTripper,
+		})
+		if err != nil {
+			pp.logger.Errorf("Error creating mimir client: %v\n", err)
+			return err
+		}
+	}
+
 	pp.provider = v1.NewAPI(client)
 	return nil
 }
@@ -102,10 +145,10 @@ func executeGraphQuery(ctx *gin.Context, queryExpression string, env map[string]
 		End:   time.Now(),
 		Step:  time.Minute,
 	}
-
 	result, warnings, err := pp.provider.QueryRange(ctx, strQuery, r)
 
 	if err != nil {
+		pp.logger.Errorf("Error querying prometheus: %s", err)
 		return nil, warnings, fmt.Errorf("error querying prometheus: %s", err)
 	}
 
@@ -156,6 +199,7 @@ func (pp *PrometheusProvider) execute(ctx *gin.Context) {
 		result, warnings, err := executeGraphQuery(ctx, graph.QueryExpression, env, duration, pp)
 
 		if err != nil {
+			pp.logger.Errorf("Error executing query: %s", err)
 			ctx.JSON(http.StatusBadRequest, err)
 			return
 		}

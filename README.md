@@ -11,7 +11,7 @@ This extension is composed by 2 components:
 ## Prerequisites
 
 - Argo CD version 2.6+
-- Prometheus
+- Prometheus/Mimir
 
 ## Quick Start
 
@@ -114,8 +114,56 @@ extension.config: |-
 where argocd-metrics-server is configured. The metrics server URL
 needs to be reacheable by the Argo CD API server.
 
+## Configuration
+The configuration of the `argocd-metrics-server` is done through a
+`config.json` file. The manifests provided conviniently mount the
+file in the `/app/config.json` path. The config file structure is
+as follows:
+```json
+{
+  "prometheus": {
+    "applications": [], # List of apps with their dashboards, can contain a default dashboard
+    "provider": {
+      "Name": "default",
+      "default": false,
+      "address": "", # Http schema url to prometheus or mimir (prometheus path)
+      "insecure": false, # In case your prometheus is using TLS, the bundled image doesn't contain any CA certs so it needs to allow insecure connections
+      "tenant": "" # X-Scope-OrgID header for Mimir
+    }
+  },
+}
+```
+
+
 ## Contributing
 
-TODO
+### Running the backend server
+The backend server is written in Go and can be run locally.
+`make build && ./dist/argocd-metrics-server`
+The server will run on port `9003` with https enabled by default.
+
+#### Parameters
+- `port`: Port to run the server on. Default is `9003`.
+- `enableTLS`: Run HTTPS server with self-signed certs. Default is `true`.
+
+#### Example request
+```sh
+POD="podinfo-787559f4-ghdbp"
+NAMESPACE="default"
+APP="podinfo"
+PROJECT="podinfo"
+ID="4adde25b-ab88-4332-8b99-f3cce952cb27"
+
+curl -v -k "https://localhost:9003/api/applications/${APP}/groupkinds/pod/rows/pod/graphs/pod_cpu_line?name=${POD}.*&namespace=${NAMESPACE}&application_name=${APP}&project=${PROJECT}&uid=${ID}&duration=1h" \
+  -H "argocd-application-name: argocd:${APP}" \
+  -H "argocd-project-name: ${PROJECT}"
+```
+
+### Running tests
+`make test`
+
+### Debugging
+Add a config file  at `./cmd/app/config.json` with the config used for debugging.
+Start the debug session with VSCode (default F5 key)
 
 [1]: https://github.com/argoproj-labs/argocd-extension-installer
